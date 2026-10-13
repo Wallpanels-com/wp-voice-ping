@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 
-import { BotCommandService, ConnectionCodeService } from "./bot-commands.js";
+import { BotCommandService } from "./bot-commands.js";
 import type { AppConfig } from "./config.js";
+import type { HighLevelClient } from "./highlevel.js";
 import { voiceCallWebhookSchema, type TelegramUpdate } from "./domain.js";
 import type { CallProcessor } from "./processor.js";
 import { secureEquals } from "./security.js";
@@ -48,10 +49,6 @@ const createSalesSchema = z.object({
 });
 
 const activeSchema = z.object({ active: z.boolean() });
-const connectionCodeSchema = z.object({
-  salesUserId: z.uuid(),
-  ttlMinutes: z.number().int().min(5).max(1440).default(30),
-});
 const testMessageSchema = z.object({ salesUserId: z.uuid() });
 
 interface BuildAppOptions {
@@ -59,6 +56,7 @@ interface BuildAppOptions {
   store: Store;
   processor: CallProcessor;
   telegram: TelegramClient;
+  highLevel: HighLevelClient;
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -83,8 +81,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     trustProxy: true,
     requestIdHeader: "x-request-id",
   });
-  const codeService = new ConnectionCodeService(options.config, options.store);
-  const botCommands = new BotCommandService(options.store, options.telegram);
+  const botCommands = new BotCommandService(options.config, options.store, options.telegram, options.highLevel);
 
   app.get("/", async () => ({ service: "wp-voice-ping", status: "ok" }));
 
@@ -176,18 +173,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!params.success || !body.success) return reply.code(422).send({ error: "invalid_payload" });
     const updated = await options.store.setSalesActive(params.data.salesUserId, body.data.active);
     return updated ? reply.send({ updated: true }) : reply.code(404).send({ error: "sales_not_found" });
-  });
-
-  app.post("/admin/connection-codes", { preHandler: requireAdmin }, async (request, reply) => {
-    const parsed = connectionCodeSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(422).send({ error: "invalid_payload" });
-    const created = await codeService.create(parsed.data.salesUserId, parsed.data.ttlMinutes);
-    if (!created) return reply.code(404).send({ error: "active_sales_not_found" });
-    return reply.code(201).send({
-      code: created.code,
-      expiresAt: created.expiresAt.toISOString(),
-      deepLink: `https://t.me/${options.config.telegramBotUsername}?start=${created.code}`,
-    });
   });
 
   app.post("/admin/test-message", { preHandler: requireAdmin }, async (request, reply) => {

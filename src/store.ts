@@ -21,6 +21,7 @@ export interface SalesAdminRecord {
   telegramUsername?: string;
   active: boolean;
   isAdmin: boolean;
+  canManage: boolean;
   binding: {
     chatId: string;
     username?: string;
@@ -40,6 +41,7 @@ export interface BindingStatus {
   salesName: string;
   active: boolean;
   isAdmin: boolean;
+  canManage: boolean;
   locations: Array<{ locationName: string; ghlUserId: string }>;
 }
 
@@ -65,7 +67,7 @@ export interface AccessRequestRecord {
 }
 
 export type TelegramStartResult =
-  | { kind: "connected"; salesName: string; isAdmin: boolean }
+  | { kind: "connected"; salesName: string; isAdmin: boolean; canManage: boolean }
   | { kind: "pending"; requestId: string; created: boolean }
   | { kind: "disabled"; salesName: string };
 
@@ -99,6 +101,7 @@ export interface Store {
   ): Promise<void>;
   resolveRoute(locationId: string, ghlUserId: string): Promise<RouteResolution>;
   listActiveAdminRecipients(): Promise<NotificationRecipient[]>;
+  listActiveManagerRecipients(): Promise<NotificationRecipient[]>;
   prepareDelivery(eventId: string, salesUserId: string, chatId: string): Promise<DeliveryPreparation>;
   markDelivery(
     deliveryId: string,
@@ -124,6 +127,7 @@ export interface Store {
     telegramUsername?: string;
   }): Promise<RedeemCodeResult>;
   getBindingStatus(chatId: string): Promise<BindingStatus | null>;
+  getBindingStatusByTelegramUserId(telegramUserId: string): Promise<BindingStatus | null>;
   getTestRecipient(salesUserId: string): Promise<TestRecipient | null>;
   startTelegramUser(input: {
     telegramUserId: string;
@@ -309,6 +313,27 @@ export class PgStore implements Store {
     }));
   }
 
+  async listActiveManagerRecipients(): Promise<NotificationRecipient[]> {
+    const result = await this.pool.query<{
+      sales_user_id: string;
+      sales_name: string;
+      chat_id: string;
+    }>(
+      `SELECT su.id AS sales_user_id, su.name AS sales_name, tb.chat_id::text AS chat_id
+       FROM wp_voice_ping.sales_users su
+       JOIN wp_voice_ping.telegram_bindings tb ON tb.sales_user_id = su.id
+       WHERE su.can_manage_bot = true AND su.active = true AND tb.active = true
+         AND tb.telegram_user_id IS NOT NULL
+       ORDER BY su.name`,
+    );
+    return result.rows.map((row) => ({
+      salesUserId: row.sales_user_id,
+      salesName: row.sales_name,
+      chatId: row.chat_id,
+      isAdmin: true,
+    }));
+  }
+
   async prepareDelivery(eventId: string, salesUserId: string, chatId: string): Promise<DeliveryPreparation> {
     const id = randomUUID();
     const result = await this.pool.query<{ id: string; already_sent: boolean }>(
@@ -360,6 +385,7 @@ export class PgStore implements Store {
       telegram_username: string | null;
       active: boolean;
       is_admin: boolean;
+      can_manage_bot: boolean;
       chat_id: string | null;
       binding_username: string | null;
       binding_active: boolean | null;
@@ -375,6 +401,7 @@ export class PgStore implements Store {
          su.telegram_username,
          su.active,
          su.is_admin,
+         su.can_manage_bot,
          tb.chat_id::text AS chat_id,
          tb.telegram_username AS binding_username,
          tb.active AS binding_active,
@@ -398,6 +425,7 @@ export class PgStore implements Store {
           name: row.name,
           active: row.active,
           isAdmin: row.is_admin,
+          canManage: row.can_manage_bot,
           binding: row.chat_id && row.verification_method
             ? {
                 chatId: row.chat_id,
@@ -429,19 +457,43 @@ export class PgStore implements Store {
     locations: SalesLocationInput[];
   }): Promise<string> {
     const client = await this.pool.connect();
-    const salesUserId = randomUUID();
     try {
       await client.query("BEGIN");
-      await client.query(
-        `INSERT INTO wp_voice_ping.sales_users (id, name, telegram_username)
-         VALUES ($1, $2, $3)`,
-        [salesUserId, input.name, input.telegramUsername ?? null],
-      );
+      const existingIds = new Set<string>();
+      for (const location of input.locations) {
+        const existing = await client.query<{ sales_user_id: string }>(
+          `SELECT sales_user_id
+           FROM wp_voice_ping.sales_location_users
+           WHERE location_id = $1 AND ghl_user_id = $2
+           FOR UPDATE`,
+          [location.locationId, location.ghlUserId],
+        );
+        if (existing.rows[0]) existingIds.add(existing.rows[0].sales_user_id);
+      }
+      if (existingIds.size > 1) throw new Error("GHL mappings belong to different sales profiles");
+
+      const salesUserId = [...existingIds][0] ?? randomUUID();
+      if (existingIds.size === 0) {
+        await client.query(
+          `INSERT INTO wp_voice_ping.sales_users (id, name, telegram_username)
+           VALUES ($1, $2, $3)`,
+          [salesUserId, input.name, input.telegramUsername ?? null],
+        );
+      } else if (input.telegramUsername) {
+        await client.query(
+          `UPDATE wp_voice_ping.sales_users
+           SET telegram_username = COALESCE(telegram_username, $2), updated_at = now()
+           WHERE id = $1`,
+          [salesUserId, input.telegramUsername],
+        );
+      }
       for (const location of input.locations) {
         await client.query(
           `INSERT INTO wp_voice_ping.sales_location_users (
              id, sales_user_id, location_id, ghl_user_id, source
-           ) VALUES ($1, $2, $3, $4, 'admin_api')`,
+           ) VALUES ($1, $2, $3, $4, 'admin_api')
+           ON CONFLICT (location_id, ghl_user_id) DO UPDATE SET
+             active = true, updated_at = now()`,
           [randomUUID(), salesUserId, location.locationId, location.ghlUserId],
         );
       }
@@ -589,6 +641,7 @@ export class PgStore implements Store {
       sales_name: string;
       active: boolean;
       is_admin: boolean;
+      can_manage_bot: boolean;
       location_name: string | null;
       ghl_user_id: string | null;
     }>(
@@ -597,6 +650,7 @@ export class PgStore implements Store {
          su.name AS sales_name,
          (su.active AND tb.active) AS active,
          su.is_admin,
+         su.can_manage_bot,
          cl.name AS location_name,
          slu.ghl_user_id
        FROM wp_voice_ping.telegram_bindings tb
@@ -616,6 +670,51 @@ export class PgStore implements Store {
       salesName: first.sales_name,
       active: first.active,
       isAdmin: first.is_admin,
+      canManage: first.can_manage_bot,
+      locations: result.rows.flatMap((row) =>
+        row.location_name && row.ghl_user_id
+          ? [{ locationName: row.location_name, ghlUserId: row.ghl_user_id }]
+          : [],
+      ),
+    };
+  }
+
+  async getBindingStatusByTelegramUserId(telegramUserId: string): Promise<BindingStatus | null> {
+    const result = await this.pool.query<{
+      sales_user_id: string;
+      sales_name: string;
+      active: boolean;
+      is_admin: boolean;
+      can_manage_bot: boolean;
+      location_name: string | null;
+      ghl_user_id: string | null;
+    }>(
+      `SELECT
+         su.id AS sales_user_id,
+         su.name AS sales_name,
+         (su.active AND tb.active) AS active,
+         su.is_admin,
+         su.can_manage_bot,
+         cl.name AS location_name,
+         slu.ghl_user_id
+       FROM wp_voice_ping.telegram_bindings tb
+       JOIN wp_voice_ping.sales_users su ON su.id = tb.sales_user_id
+       LEFT JOIN wp_voice_ping.sales_location_users slu
+         ON slu.sales_user_id = su.id AND slu.active = true
+       LEFT JOIN wp_voice_ping.crm_locations cl
+         ON cl.id = slu.location_id AND cl.active = true
+       WHERE tb.telegram_user_id = $1
+       ORDER BY cl.name`,
+      [telegramUserId],
+    );
+    const first = result.rows[0];
+    if (!first) return null;
+    return {
+      salesUserId: first.sales_user_id,
+      salesName: first.sales_name,
+      active: first.active,
+      isAdmin: first.is_admin,
+      canManage: first.can_manage_bot,
       locations: result.rows.flatMap((row) =>
         row.location_name && row.ghl_user_id
           ? [{ locationName: row.location_name, ghlUserId: row.ghl_user_id }]
@@ -656,11 +755,12 @@ export class PgStore implements Store {
         sales_name: string;
         sales_active: boolean;
         is_admin: boolean;
+        can_manage_bot: boolean;
         binding_active: boolean;
         auto_link_allowed: boolean;
       }>(
         `SELECT su.id AS sales_user_id, su.name AS sales_name, su.active AS sales_active,
-                su.is_admin, tb.active AS binding_active, tb.auto_link_allowed
+                su.is_admin, su.can_manage_bot, tb.active AS binding_active, tb.auto_link_allowed
          FROM wp_voice_ping.telegram_bindings tb
          JOIN wp_voice_ping.sales_users su ON su.id = tb.sales_user_id
          WHERE tb.telegram_user_id = $1
@@ -689,7 +789,12 @@ export class PgStore implements Store {
               [binding.sales_user_id, input.chatId, input.telegramUsername ?? null],
             );
             await client.query("COMMIT");
-            return { kind: "connected", salesName: binding.sales_name, isAdmin: binding.is_admin };
+            return {
+              kind: "connected",
+              salesName: binding.sales_name,
+              isAdmin: binding.is_admin,
+              canManage: binding.can_manage_bot,
+            };
           }
         }
       }
@@ -784,7 +889,7 @@ export class PgStore implements Store {
         `SELECT su.id FROM wp_voice_ping.sales_users su
          JOIN wp_voice_ping.telegram_bindings tb ON tb.sales_user_id = su.id
          WHERE tb.telegram_user_id = $1 AND tb.active = true
-           AND su.active = true AND su.is_admin = true`,
+           AND su.active = true AND su.can_manage_bot = true`,
         [input.adminTelegramUserId],
       );
       if (!admin.rows[0]) {
@@ -867,7 +972,7 @@ export class PgStore implements Store {
          SELECT su.id FROM wp_voice_ping.sales_users su
          JOIN wp_voice_ping.telegram_bindings tb ON tb.sales_user_id = su.id
          WHERE tb.telegram_user_id = $2 AND tb.active = true
-           AND su.active = true AND su.is_admin = true
+           AND su.active = true AND su.can_manage_bot = true
        ) admin
        WHERE req.id = $1 AND req.status = 'pending'`,
       [requestId, adminTelegramUserId],

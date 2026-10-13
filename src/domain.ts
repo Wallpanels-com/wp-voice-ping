@@ -41,6 +41,11 @@ export interface GhlConversation {
   locationId: string;
 }
 
+export interface GhlUser {
+  id: string;
+  name: string;
+}
+
 export type CallEventStatus =
   | "processing"
   | "delivered"

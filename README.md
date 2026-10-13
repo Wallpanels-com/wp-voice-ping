@@ -1,6 +1,6 @@
 # WP Voice Ping
 
-WP Voice Ping receives completed Voice AI call events from a GoHighLevel Workflow. It notifies the contact's current Assigned User and every active administrator. It supports WallPanels and Verona Home without mixing their credentials or mappings.
+WP Voice Ping receives completed Voice AI call events from a GoHighLevel Workflow. It notifies the contact's current Assigned User and every active all-call recipient. It supports WallPanels and Verona Home without mixing their credentials or mappings.
 
 ## Routing guarantee
 
@@ -12,7 +12,7 @@ The recipient is resolved in this order:
 4. Resolve the active database mapping `location_id + ghl_user_id`.
 5. Require an active Telegram binding verified by trusted numeric Telegram ID or administrator approval.
 6. Resolve the contact's HighLevel `conversationId` and include a direct **Open Conversation** button.
-7. Send to the assigned sales chat plus active administrators, deduplicated by employee.
+7. Send to the assigned sales chat plus active all-call recipients, deduplicated by employee.
 
 There is no fallback to Opportunity Owner, another sales user, a shared group, or unapproved Telegram users. Administrators still receive calls with a routing warning when the assigned sales route is missing.
 
@@ -24,7 +24,7 @@ Voice AI call completed
   -> authenticated custom webhook
   -> Railway Fastify service
   -> Neon Postgres mapping and idempotency
-  -> Telegram private chat of the Assigned User and active administrators
+  -> Telegram private chat of the Assigned User and active all-call recipients
 ```
 
 ## Local setup
@@ -54,7 +54,6 @@ The service resolves `conversationId` through HighLevel Conversations Search and
 - `GET /admin/sales` lists mappings and connection state.
 - `POST /admin/sales` adds a sales user and one or more location mappings.
 - `PATCH /admin/sales/:salesUserId` enables or disables a sales user.
-- `POST /admin/connection-codes` remains available for backward compatibility; normal onboarding does not use codes.
 - `POST /admin/test-message` sends a test message only to an active verified binding.
 
 Admin endpoints require `Authorization: Bearer $ADMIN_API_TOKEN`.
@@ -64,7 +63,7 @@ Admin endpoints require `Authorization: Bearer $ADMIN_API_TOKEN`.
 - `/start` connects a pre-confirmed numeric Telegram ID or creates an administrator approval request.
 - `/status` shows the current binding and location mappings.
 - `/help` shows usage.
-- `/admin` opens employee statuses, pending approvals, enable/disable controls, and a test notification.
+- `/admin` is authorized by the manager's numeric Telegram ID and opens employee statuses, pending approvals, enable/disable controls, live GHL user selection, and a test notification.
 
 Telegram usernames are display metadata only and never grant access by themselves.
 
@@ -72,7 +71,7 @@ Telegram usernames are display metadata only and never grant access by themselve
 
 SQL migrations live in `migrations/`. The startup command applies unapplied migrations under an advisory lock before starting the server. The application uses the isolated `wp_voice_ping` schema.
 
-Initial records include both locations, six known people, ten confirmed location/user mappings for five people, and four trusted numeric Telegram IDs that activate only when the same Telegram user presses Start. Dmitry and Katherina are administrators. Dmitry is stored without a GHL mapping because the source data did not contain one.
+Initial records include both locations and ten known people. Dmitry is the only bot manager. Dmitry and Katherina are all-call recipients; Katherina cannot manage onboarding. Iryna Zienina and Tetiana Mushyn are mapped only to WallPanels, while Daria Inozemtseva and Shafag Ibragimova are mapped to both locations, matching the live GHL Users API. Numeric Telegram IDs are never inferred from usernames, names, or phone numbers.
 
 ## Verification
 

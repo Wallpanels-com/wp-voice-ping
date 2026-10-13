@@ -41,6 +41,15 @@ describe("HighLevelHttpClient", () => {
     });
     expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("contactId=contact-1");
   });
+
+  it("lists current GHL users for administrator onboarding", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      users: [{ id: "user-1", firstName: "New", lastName: "Sales" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new HighLevelHttpClient({ fetchImpl });
+    await expect(client.listUsers(location)).resolves.toEqual([{ id: "user-1", name: "New Sales" }]);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain(`locationId=${location.id}`);
+  });
 });
 
 describe("TelegramHttpClient", () => {

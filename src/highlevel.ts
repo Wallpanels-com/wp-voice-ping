@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { LocationConfig } from "./config.js";
-import type { GhlContact, GhlConversation } from "./domain.js";
+import type { GhlContact, GhlConversation, GhlUser } from "./domain.js";
 import { ExternalServiceError } from "./external-error.js";
 
 const contactSchema = z.object({
@@ -24,9 +24,19 @@ const conversationSearchSchema = z.object({
   }).passthrough()),
 });
 
+const usersSchema = z.object({
+  users: z.array(z.object({
+    id: z.string(),
+    name: z.string().nullish(),
+    firstName: z.string().nullish(),
+    lastName: z.string().nullish(),
+  }).passthrough()),
+});
+
 export interface HighLevelClient {
   getContact(location: LocationConfig, contactId: string): Promise<GhlContact>;
   findConversation(location: LocationConfig, contactId: string): Promise<GhlConversation>;
+  listUsers(location: LocationConfig): Promise<GhlUser[]>;
 }
 
 interface HighLevelHttpClientOptions {
@@ -151,6 +161,25 @@ export class HighLevelHttpClient implements HighLevelClient {
       });
     }
     return conversation;
+  }
+
+  async listUsers(location: LocationConfig): Promise<GhlUser[]> {
+    const endpoint = new URL("https://services.leadconnectorhq.com/users/");
+    endpoint.searchParams.set("locationId", location.id);
+    const payload = await this.requestJson(location, endpoint.toString(), "2021-07-28");
+    const parsed = usersSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new ExternalServiceError({
+        service: "ghl",
+        code: "invalid_users_response",
+        retryable: false,
+        message: "GHL returned an unexpected users response",
+      });
+    }
+    return parsed.data.users.map((user) => {
+      const combined = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+      return { id: user.id, name: user.name?.trim() || combined || `GHL User ${user.id}` };
+    });
   }
 
   private async requestJson(location: LocationConfig, endpoint: string, version: string): Promise<unknown> {

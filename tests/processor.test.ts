@@ -105,6 +105,7 @@ class MemoryStore implements Store {
   }
 
   async listActiveAdminRecipients(): Promise<NotificationRecipient[]> { return this.admins; }
+  async listActiveManagerRecipients(): Promise<NotificationRecipient[]> { return []; }
 
   async prepareDelivery(eventId: string, salesUserId: string, chatId: string): Promise<DeliveryPreparation> {
     this.deliveries.push({ eventId, salesUserId, chatId });
@@ -135,6 +136,7 @@ class MemoryStore implements Store {
     telegramUsername?: string;
   }): Promise<RedeemCodeResult> { return { kind: "invalid" }; }
   async getBindingStatus(_chatId: string): Promise<BindingStatus | null> { return null; }
+  async getBindingStatusByTelegramUserId(_telegramUserId: string): Promise<BindingStatus | null> { return null; }
   async getTestRecipient(_salesUserId: string): Promise<TestRecipient | null> { return null; }
   async startTelegramUser(_input: {
     telegramUserId: string; chatId: string; telegramUsername?: string; firstName?: string; lastName?: string;
@@ -166,6 +168,8 @@ class FakeHighLevel implements HighLevelClient {
     if (this.error) throw this.error;
     return { id: `conversation-${contactId}`, contactId, locationId: location.id };
   }
+
+  async listUsers() { return []; }
 }
 
 class FakeTelegram implements TelegramClient {
@@ -391,8 +395,8 @@ describe("CallProcessor routing", () => {
 
 describe("Webhook authorization", () => {
   it("rejects an unauthorized GHL webhook", async () => {
-    const { store, telegram, processor } = setup();
-    const app = buildApp({ config, store, telegram, processor });
+    const { store, highLevel, telegram, processor } = setup();
+    const app = buildApp({ config, store, telegram, processor, highLevel });
     const response = await app.inject({
       method: "POST",
       url: "/webhooks/ghl/voice-ai-call-completed",
@@ -403,8 +407,8 @@ describe("Webhook authorization", () => {
   });
 
   it("rejects a malformed authorized webhook", async () => {
-    const { store, telegram, processor } = setup();
-    const app = buildApp({ config, store, telegram, processor });
+    const { store, highLevel, telegram, processor } = setup();
+    const app = buildApp({ config, store, telegram, processor, highLevel });
     const response = await app.inject({
       method: "POST",
       url: "/webhooks/ghl/voice-ai-call-completed",

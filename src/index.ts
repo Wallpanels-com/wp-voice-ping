@@ -21,7 +21,7 @@ const processorLogger = {
   },
 };
 const processor = new CallProcessor(config, store, highLevel, telegram, processorLogger);
-const app = buildApp({ config, store, processor, telegram });
+const app = buildApp({ config, store, processor, telegram, highLevel });
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, "Shutting down WP Voice Ping");
