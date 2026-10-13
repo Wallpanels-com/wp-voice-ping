@@ -35,6 +35,12 @@ export interface GhlContact {
   phone?: string;
 }
 
+export interface GhlConversation {
+  id: string;
+  contactId: string;
+  locationId: string;
+}
+
 export type CallEventStatus =
   | "processing"
   | "delivered"
@@ -80,5 +86,11 @@ export interface TelegramUpdate {
     text?: string;
     chat: { id: number; type: string };
     from?: { id: number; username?: string; first_name?: string; last_name?: string };
+  };
+  callback_query?: {
+    id: string;
+    data?: string;
+    from: { id: number; username?: string; first_name?: string; last_name?: string };
+    message?: { message_id: number; chat: { id: number; type: string } };
   };
 }

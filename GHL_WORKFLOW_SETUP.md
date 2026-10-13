@@ -89,7 +89,7 @@ Add `occurredAt` only if the trigger exposes an ISO timestamp. Add `callSummary`
 
 1. Keep the workflow in Draft.
 2. Use a controlled test contact with a known Assigned User.
-3. Confirm that the sales user has completed `/start CODE` in `@WPVoicePingBot`.
+3. Confirm that the sales user has completed `/start` in `@WPVoicePingBot` and is connected or administrator-approved.
 4. Replace the call-ID placeholders using the Dynamic Value picker.
 5. Run the Workflow test and inspect Execution Logs.
 6. A delivered notification returns HTTP 200. A valid event waiting for an assignment or Telegram binding returns HTTP 202. Temporary GHL or Telegram failure returns HTTP 503 so the workflow can retry.
@@ -100,4 +100,4 @@ Do not report the live Voice AI path as verified until step 8 succeeds.
 
 ## Duplicate prevention
 
-Use the stable call ID as both `eventId` and `callId`. Neon enforces a unique constraint on `location_id + external_event_id`, and Telegram delivery has one database row per call event. Workflow re-entry is therefore safe for different calls while repeated delivery of the same call is suppressed.
+Use the stable call ID as both `eventId` and `callId`. Neon enforces a unique constraint on `location_id + external_event_id`, and Telegram delivery has one database row per call event and recipient. Workflow re-entry is therefore safe for different calls while repeated delivery of the same call is suppressed for every recipient.

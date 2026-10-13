@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { LocationConfig } from "../src/config.js";
 import { HighLevelHttpClient } from "../src/highlevel.js";
-import { TelegramHttpClient } from "../src/telegram.js";
+import { conversationUrl, TelegramHttpClient } from "../src/telegram.js";
 
 const location: LocationConfig = {
   id: "Iwpfx8zGzpsZszcnGovT",
@@ -27,9 +27,28 @@ describe("HighLevelHttpClient", () => {
     expect(contact.assignedTo).toBe("user-1");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
+
+  it("resolves a conversation ID for a contact", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      conversations: [{ id: "conversation-1", contactId: "contact-1", locationId: location.id }],
+      total: 1,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new HighLevelHttpClient({ fetchImpl });
+    await expect(client.findConversation(location, "contact-1")).resolves.toMatchObject({
+      id: "conversation-1",
+      contactId: "contact-1",
+      locationId: location.id,
+    });
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("contactId=contact-1");
+  });
 });
 
 describe("TelegramHttpClient", () => {
+  it("builds the verified HighLevel conversation deep link", () => {
+    expect(conversationUrl(location.id, "conversation-1")).toBe(
+      `https://app.gohighlevel.com/v2/location/${location.id}/conversations/conversations/conversation-1`,
+    );
+  });
   it("accepts Telegram's boolean setWebhook result", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       ok: true,
@@ -65,5 +84,34 @@ describe("TelegramHttpClient", () => {
     expect(delays).toEqual([1000]);
     const secondBody = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
     expect(secondBody.disable_notification).toBe(false);
+  });
+
+  it("adds Open Conversation to every call notification", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: { message_id: 88 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new TelegramHttpClient({ token: "test-telegram-token", fetchImpl });
+    await client.sendCallNotification({
+      chatId: "123",
+      salesName: "Mary",
+      location,
+      webhook: {
+        eventId: "event-1",
+        eventType: "voice_ai_call.completed",
+        locationId: location.id,
+        contactId: "contact-1",
+        callStatus: "completed",
+      },
+      contact: { id: "contact-1", locationId: location.id },
+      conversationId: "conversation-1",
+    });
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as {
+      reply_markup: { inline_keyboard: Array<Array<{ text: string; url: string }>> };
+    };
+    expect(body.reply_markup.inline_keyboard[0]?.[0]).toEqual({
+      text: "Open Conversation",
+      url: `https://app.gohighlevel.com/v2/location/${location.id}/conversations/conversations/conversation-1`,
+    });
   });
 });

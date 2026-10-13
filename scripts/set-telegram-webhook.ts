@@ -6,4 +6,5 @@ if (!config.publicBaseUrl) throw new Error("PUBLIC_BASE_URL is required to confi
 const telegram = new TelegramHttpClient({ token: config.telegramBotToken });
 const bot = await telegram.getMe();
 await telegram.setWebhook(`${config.publicBaseUrl}/telegram/webhook`, config.telegramWebhookSecret);
+await telegram.setCommands();
 process.stdout.write(`Telegram webhook configured for bot ${bot.username ?? bot.id}\n`);

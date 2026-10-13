@@ -14,11 +14,16 @@ import type { HighLevelClient } from "../src/highlevel.js";
 import { CallProcessor } from "../src/processor.js";
 import type {
   BindingStatus,
+  AccessRequestRecord,
+  ApprovalResult,
+  DeliveryPreparation,
+  NotificationRecipient,
   RedeemCodeResult,
   SalesAdminRecord,
   SalesLocationInput,
   Store,
   TestRecipient,
+  TelegramStartResult,
 } from "../src/store.js";
 import type { TelegramClient, TelegramMessageOptions } from "../src/telegram.js";
 
@@ -68,6 +73,7 @@ class MemoryStore implements Store {
   readonly events = new Map<string, { id: string; status: CallEventStatus; reason?: string }>();
   readonly routes = new Map<string, RouteResolution>();
   readonly deliveries: Array<{ eventId: string; salesUserId: string; chatId: string; status?: string }> = [];
+  readonly admins: NotificationRecipient[] = [];
   claimCount = 0;
 
   async healthCheck(): Promise<void> {}
@@ -98,9 +104,11 @@ class MemoryStore implements Store {
     return this.routes.get(`${locationId}:${ghlUserId}`) ?? { kind: "unavailable", reason: "mapping_not_found" };
   }
 
-  async prepareDelivery(eventId: string, salesUserId: string, chatId: string): Promise<string> {
+  async listActiveAdminRecipients(): Promise<NotificationRecipient[]> { return this.admins; }
+
+  async prepareDelivery(eventId: string, salesUserId: string, chatId: string): Promise<DeliveryPreparation> {
     this.deliveries.push({ eventId, salesUserId, chatId });
-    return `delivery-${eventId}`;
+    return { id: `delivery-${eventId}-${salesUserId}`, alreadySent: false };
   }
 
   async markDelivery(
@@ -108,7 +116,7 @@ class MemoryStore implements Store {
     status: "sent" | "retryable_failure" | "permanent_failure",
     _details?: { telegramMessageId?: number; errorCode?: string },
   ): Promise<void> {
-    const delivery = this.deliveries.find((item) => `delivery-${item.eventId}` === deliveryId);
+    const delivery = this.deliveries.find((item) => `delivery-${item.eventId}-${item.salesUserId}` === deliveryId);
     if (delivery) delivery.status = status;
   }
 
@@ -128,6 +136,14 @@ class MemoryStore implements Store {
   }): Promise<RedeemCodeResult> { return { kind: "invalid" }; }
   async getBindingStatus(_chatId: string): Promise<BindingStatus | null> { return null; }
   async getTestRecipient(_salesUserId: string): Promise<TestRecipient | null> { return null; }
+  async startTelegramUser(_input: {
+    telegramUserId: string; chatId: string; telegramUsername?: string; firstName?: string; lastName?: string;
+  }): Promise<TelegramStartResult> { return { kind: "pending", requestId: "request", created: true }; }
+  async listPendingAccessRequests(): Promise<AccessRequestRecord[]> { return []; }
+  async approveAccessRequest(_input: {
+    requestId: string; salesUserId: string; adminTelegramUserId: string;
+  }): Promise<ApprovalResult> { return { kind: "request_not_found" }; }
+  async rejectAccessRequest(_requestId: string, _adminTelegramUserId: string): Promise<boolean> { return false; }
 }
 
 class FakeHighLevel implements HighLevelClient {
@@ -145,10 +161,15 @@ class FakeHighLevel implements HighLevelClient {
       phone: "+13055551234",
     };
   }
+
+  async findConversation(location: LocationConfig, contactId: string) {
+    if (this.error) throw this.error;
+    return { id: `conversation-${contactId}`, contactId, locationId: location.id };
+  }
 }
 
 class FakeTelegram implements TelegramClient {
-  readonly sent: Array<{ chatId: string; salesName?: string }> = [];
+  readonly sent: Array<{ chatId: string; salesName?: string; routingIssue?: string }> = [];
   error?: ExternalServiceError;
 
   async sendText(chatId: string, _text: string, _options?: TelegramMessageOptions): Promise<number> {
@@ -163,13 +184,21 @@ class FakeTelegram implements TelegramClient {
     location: LocationConfig;
     webhook: VoiceCallWebhook;
     contact: GhlContact;
+    conversationId: string;
+    routingIssue?: string;
   }): Promise<number> {
     if (this.error) throw this.error;
-    this.sent.push({ chatId: input.chatId, salesName: input.salesName });
+    this.sent.push({
+      chatId: input.chatId,
+      salesName: input.salesName,
+      ...(input.routingIssue ? { routingIssue: input.routingIssue } : {}),
+    });
     return this.sent.length;
   }
 
   async setWebhook(_url: string, _secretToken: string): Promise<void> {}
+  async setCommands(): Promise<void> {}
+  async answerCallbackQuery(_callbackQueryId: string, _text?: string): Promise<void> {}
   async getMe(): Promise<{ id: number; username?: string }> { return { id: 1, username: "WPVoicePingBot" }; }
 }
 
@@ -280,6 +309,41 @@ describe("CallProcessor routing", () => {
     });
     await processor.process(webhook({ eventId: "new-event", contactId: "new-contact" }));
     expect(telegram.sent[0]?.chatId).toBe("new-chat");
+  });
+
+  it("sends every call to active admins and the assigned sales", async () => {
+    const { store, telegram, processor } = setup();
+    store.routes.set(`${wallpanels.id}:sales-ghl-1`, {
+      kind: "ready", salesUserId: "sales-1", salesName: "Mary", chatId: "chat-mary",
+    });
+    store.admins.push(
+      { salesUserId: "admin-1", salesName: "Dmitry", chatId: "chat-dima", isAdmin: true },
+      { salesUserId: "admin-2", salesName: "Katherina", chatId: "chat-kate", isAdmin: true },
+    );
+    await processor.process(webhook());
+    expect(telegram.sent.map((item) => item.chatId)).toEqual(["chat-mary", "chat-dima", "chat-kate"]);
+  });
+
+  it("does not duplicate a recipient who is both admin and assigned sales", async () => {
+    const { store, telegram, processor } = setup();
+    store.routes.set(`${wallpanels.id}:sales-ghl-1`, {
+      kind: "ready", salesUserId: "admin-1", salesName: "Katherina", chatId: "chat-kate",
+    });
+    store.admins.push({ salesUserId: "admin-1", salesName: "Katherina", chatId: "chat-kate", isAdmin: true });
+    await processor.process(webhook());
+    expect(telegram.sent).toHaveLength(1);
+  });
+
+  it("notifies admins with a warning when the contact is unassigned", async () => {
+    const { store, highLevel, telegram, processor } = setup();
+    highLevel.contacts.set(`${wallpanels.id}:contact-1`, { id: "contact-1", locationId: wallpanels.id });
+    store.admins.push({ salesUserId: "admin-1", salesName: "Dmitry", chatId: "chat-dima", isAdmin: true });
+    await expect(processor.process(webhook())).resolves.toMatchObject({ kind: "delivered" });
+    expect(telegram.sent).toEqual([{
+      chatId: "chat-dima",
+      salesName: "Unassigned",
+      routingIssue: "Contact has no Assigned User.",
+    }]);
   });
 
   it("does not notify a disabled sales user", async () => {

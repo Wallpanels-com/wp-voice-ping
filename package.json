@@ -16,7 +16,7 @@
     "migrate:production": "node dist/src/migrate.js",
     "db:verify": "node dist/scripts/verify-database.js",
     "telegram:verify": "node dist/scripts/verify-telegram.js",
-    "test": "vitest run",
+    "test": "vitest run --exclude 'dist/**'",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test && npm run build",

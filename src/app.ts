@@ -22,6 +22,20 @@ const telegramUpdateSchema = z.object({
       last_name: z.string().optional(),
     }).optional(),
   }).optional(),
+  callback_query: z.object({
+    id: z.string(),
+    data: z.string().optional(),
+    from: z.object({
+      id: z.number(),
+      username: z.string().optional(),
+      first_name: z.string().optional(),
+      last_name: z.string().optional(),
+    }),
+    message: z.object({
+      message_id: z.number(),
+      chat: z.object({ id: z.number(), type: z.string() }),
+    }).optional(),
+  }).optional(),
 }).passthrough();
 
 const createSalesSchema = z.object({
@@ -70,7 +84,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     requestIdHeader: "x-request-id",
   });
   const codeService = new ConnectionCodeService(options.config, options.store);
-  const botCommands = new BotCommandService(options.config, options.store, options.telegram);
+  const botCommands = new BotCommandService(options.store, options.telegram);
 
   app.get("/", async () => ({ service: "wp-voice-ping", status: "ok" }));
 

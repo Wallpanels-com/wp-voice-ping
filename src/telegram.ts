@@ -16,7 +16,11 @@ const telegramResponseSchema = z.object({
 });
 
 export interface TelegramMessageOptions {
-  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; url: string }>> };
+  replyMarkup?: {
+    inline_keyboard: Array<Array<
+      { text: string; url: string } | { text: string; callback_data: string }
+    >>;
+  };
 }
 
 export interface TelegramClient {
@@ -27,8 +31,12 @@ export interface TelegramClient {
     location: LocationConfig;
     webhook: VoiceCallWebhook;
     contact: GhlContact;
+    conversationId: string;
+    routingIssue?: string;
   }): Promise<number>;
+  answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   setWebhook(url: string, secretToken: string): Promise<void>;
+  setCommands(): Promise<void>;
   getMe(): Promise<{ id: number; username?: string }>;
 }
 
@@ -63,17 +71,9 @@ function contactName(contact: GhlContact, webhook: VoiceCallWebhook): string {
   return contact.name ?? (combined || webhook.clientName || "Unknown client");
 }
 
-function crmUrl(location: LocationConfig, contactId: string): string | undefined {
-  if (!location.contactUrlTemplate) return undefined;
-  const value = location.contactUrlTemplate
-    .replaceAll("{locationId}", encodeURIComponent(location.id))
-    .replaceAll("{contactId}", encodeURIComponent(contactId));
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" ? url.toString() : undefined;
-  } catch {
-    return undefined;
-  }
+export function conversationUrl(locationId: string, conversationId: string): string {
+  return `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}`
+    + `/conversations/conversations/${encodeURIComponent(conversationId)}`;
 }
 
 export class TelegramHttpClient implements TelegramClient {
@@ -118,6 +118,8 @@ export class TelegramHttpClient implements TelegramClient {
     location: LocationConfig;
     webhook: VoiceCallWebhook;
     contact: GhlContact;
+    conversationId: string;
+    routingIssue?: string;
   }): Promise<number> {
     const name = contactName(input.contact, input.webhook);
     const phone = input.contact.phone ?? input.webhook.clientPhone;
@@ -131,21 +133,42 @@ export class TelegramHttpClient implements TelegramClient {
       "AI has completed a call with this client.",
       "Please review the conversation and follow up if necessary.",
     ];
+    if (input.routingIssue) {
+      lines.push("", `<b>Routing warning:</b> ${escapeHtml(input.routingIssue)}`);
+    }
     if (input.webhook.callSummary) {
       lines.push("", `<b>Call Summary</b>`, escapeHtml(input.webhook.callSummary));
     }
-    const url = crmUrl(input.location, input.webhook.contactId);
-    const options: TelegramMessageOptions = {};
-    if (url) options.replyMarkup = { inline_keyboard: [[{ text: "Open in CRM", url }]] };
-    return this.sendText(input.chatId, lines.join("\n"), options);
+    const url = conversationUrl(input.location.id, input.conversationId);
+    return this.sendText(input.chatId, lines.join("\n"), {
+      replyMarkup: { inline_keyboard: [[{ text: "Open Conversation", url }]] },
+    });
+  }
+
+  async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    await this.call("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    });
   }
 
   async setWebhook(url: string, secretToken: string): Promise<void> {
     await this.call("setWebhook", {
       url,
       secret_token: secretToken,
-      allowed_updates: ["message"],
+      allowed_updates: ["message", "callback_query"],
       drop_pending_updates: false,
+    });
+  }
+
+  async setCommands(): Promise<void> {
+    await this.call("setMyCommands", {
+      commands: [
+        { command: "start", description: "Connect or request access" },
+        { command: "status", description: "Check connection status" },
+        { command: "help", description: "Show help" },
+        { command: "admin", description: "Administrator menu" },
+      ],
     });
   }
 
