@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Local environment and platform state
+.env
+.env.*
+!.env.example
+.neon/
+.railway/
+
+# Sensitive source documents and local artifacts
+*.docx
+*.pdf
+*.log
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test and temporary output
+.tmp/
+tmp/
+test-results/

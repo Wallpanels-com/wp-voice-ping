@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.neon
+.railway
+node_modules
+dist
+coverage
+*.docx
+*.pdf
+*.log
+.DS_Store
+test-results
