@@ -7,7 +7,10 @@ import { ExternalServiceError } from "./external-error.js";
 const telegramResponseSchema = z.object({
   ok: z.boolean(),
   description: z.string().optional(),
-  result: z.object({ message_id: z.number() }).passthrough().optional(),
+  result: z.union([
+    z.boolean(),
+    z.object({ message_id: z.number() }).passthrough(),
+  ]).optional(),
   error_code: z.number().optional(),
   parameters: z.object({ retry_after: z.number().optional() }).optional(),
 });
@@ -97,7 +100,7 @@ export class TelegramHttpClient implements TelegramClient {
       disable_web_page_preview: true,
       ...(options.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
     });
-    const messageId = result.result?.message_id;
+    const messageId = typeof result.result === "object" ? result.result.message_id : undefined;
     if (messageId === undefined) {
       throw new ExternalServiceError({
         service: "telegram",

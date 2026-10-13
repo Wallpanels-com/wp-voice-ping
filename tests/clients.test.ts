@@ -30,6 +30,18 @@ describe("HighLevelHttpClient", () => {
 });
 
 describe("TelegramHttpClient", () => {
+  it("accepts Telegram's boolean setWebhook result", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: true,
+      description: "Webhook was set",
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = new TelegramHttpClient({ token: "test-telegram-token", fetchImpl });
+
+    await expect(client.setWebhook("https://example.com/telegram/webhook", "secret-token"))
+      .resolves.toBeUndefined();
+  });
+
   it("honors retry_after and retries without silent delivery", async () => {
     const delays: number[] = [];
     const fetchImpl = vi.fn<typeof fetch>()

@@ -34,7 +34,7 @@ Add **Custom Webhook** after the trigger.
 
 - Event: **CUSTOM**
 - Method: **POST**
-- URL: `https://RAILWAY_DOMAIN/webhooks/ghl/voice-ai-call-completed`
+- URL: `https://wp-voice-ping-production.up.railway.app/webhooks/ghl/voice-ai-call-completed`
 - Authorization: **No auth**
 - Header: `Content-Type: application/json`
 - Header: `X-WP-Voice-Ping-Secret: VALUE_FROM_RAILWAY_GHL_WEBHOOK_SECRET`
