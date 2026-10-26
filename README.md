@@ -71,7 +71,7 @@ Telegram usernames are display metadata only and never grant access by themselve
 
 SQL migrations live in `migrations/`. The startup command applies unapplied migrations under an advisory lock before starting the server. The application uses the isolated `wp_voice_ping` schema.
 
-Initial records include both locations and eleven known people. Dmitry is the only bot manager. Dmitry, Katherina, and Foxion CEO are all-call recipients; Katherina and Foxion cannot manage onboarding. Iryna Zienina and Tetiana Mushyn are mapped only to WallPanels, while Daria Inozemtseva and Shafag Ibragimova are mapped to both locations, matching the live GHL Users API. Numeric Telegram IDs are never inferred from usernames, names, or phone numbers.
+Initial records include both locations and twelve known people. Dmitry is the only bot manager. Dmitry, Katherina, and Foxion CEO are all-call recipients; Katherina and Foxion cannot manage onboarding. Iryna Zienina and Tetiana Mushyn are mapped only to WallPanels, while Daria Inozemtseva, Shafag Ibragimova, and Jenny Cartner are mapped to both locations, matching the live GHL Users API. Numeric Telegram IDs are never inferred from usernames, names, or phone numbers.
 
 ## Verification
 
