@@ -394,6 +394,19 @@ describe("CallProcessor routing", () => {
 });
 
 describe("Webhook authorization", () => {
+  it("asks GHL to retry while another request is still processing the event", async () => {
+    const { store, highLevel, telegram, processor } = setup();
+    await store.claimCallEvent(webhook());
+    const app = buildApp({ config, store, telegram, processor, highLevel });
+    const response = await app.inject({
+      method: "POST", url: "/webhooks/ghl/voice-ai-call-completed",
+      headers: { "x-wp-voice-ping-secret": config.ghlWebhookSecret }, payload: webhook(),
+    });
+    expect(response.statusCode).toBe(503);
+    expect(telegram.sent).toHaveLength(0);
+    await app.close();
+  });
+
   it("rejects an unauthorized GHL webhook", async () => {
     const { store, highLevel, telegram, processor } = setup();
     const app = buildApp({ config, store, telegram, processor, highLevel });

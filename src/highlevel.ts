@@ -149,18 +149,26 @@ export class HighLevelHttpClient implements HighLevelClient {
     endpoint.searchParams.set("contactId", contactId);
     endpoint.searchParams.set("limit", "1");
 
-    const payload = await this.requestJson(location, endpoint.toString(), "2021-04-15");
-    const parsed = conversationSearchSchema.safeParse(payload);
-    const conversation = parsed.success ? parsed.data.conversations[0] : undefined;
-    if (!conversation || conversation.contactId !== contactId || conversation.locationId !== location.id) {
-      throw new ExternalServiceError({
-        service: "ghl",
-        code: "conversation_not_found",
-        retryable: false,
-        message: "GHL did not return a conversation for this contact",
-      });
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      const payload = await this.requestJson(location, endpoint.toString(), "2021-04-15");
+      const parsed = conversationSearchSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new ExternalServiceError({ service: "ghl", code: "invalid_conversation_response",
+          retryable: false, message: "GHL returned an invalid conversation response" });
+      }
+      const conversation = parsed.data.conversations[0];
+      if (conversation) {
+        if (conversation.contactId !== contactId || conversation.locationId !== location.id) {
+          throw new ExternalServiceError({ service: "ghl", code: "conversation_location_mismatch",
+            retryable: false, message: "GHL conversation does not match the requested contact and location" });
+        }
+        return conversation;
+      }
+      // Search indexing can lag behind the call-completed webhook.
+      if (attempt < this.maxAttempts) await this.sleep(1000 * attempt);
     }
-    return conversation;
+    throw new ExternalServiceError({ service: "ghl", code: "conversation_not_found",
+      retryable: true, message: "GHL conversation is not available yet" });
   }
 
   async listUsers(location: LocationConfig): Promise<GhlUser[]> {

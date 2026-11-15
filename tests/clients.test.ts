@@ -12,6 +12,36 @@ const location: LocationConfig = {
 };
 
 describe("HighLevelHttpClient", () => {
+  it("waits for a conversation that is not indexed immediately", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversations: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversations: [
+        { id: "conversation-1", contactId: "contact-1", locationId: location.id },
+      ] })));
+    const client = new HighLevelHttpClient({ fetchImpl, sleep: async () => undefined });
+    await expect(client.findConversation(location, "contact-1")).resolves.toMatchObject({ id: "conversation-1" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps missing conversations retryable without returning a guessed link", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ conversations: [] })));
+    const client = new HighLevelHttpClient({ fetchImpl, sleep: async () => undefined });
+    await expect(client.findConversation(location, "contact-1")).rejects.toMatchObject({
+      code: "conversation_not_found", retryable: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("never accepts a conversation from a different CRM location", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      conversations: [{ id: "wrong", contactId: "contact-1", locationId: "other" }],
+    })));
+    const client = new HighLevelHttpClient({ fetchImpl });
+    await expect(client.findConversation(location, "contact-1")).rejects.toMatchObject({
+      code: "conversation_location_mismatch", retryable: false,
+    });
+  });
   it("retries a temporary HTTP failure", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response("{}", { status: 503 }))

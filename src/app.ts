@@ -113,6 +113,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
 
     const outcome = await options.processor.process(parsed.data);
+    if (outcome.kind === "duplicate" && outcome.status === "processing") {
+      // A concurrent request has not finished: do not acknowledge delivery yet.
+      return reply.code(503).send(outcome);
+    }
     if (outcome.kind === "retryable_failure") {
       return reply.code(503).send(outcome);
     }
