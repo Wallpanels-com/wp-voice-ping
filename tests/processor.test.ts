@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/app.js";
 import type { AppConfig, LocationConfig } from "../src/config.js";
@@ -394,6 +394,52 @@ describe("CallProcessor routing", () => {
 });
 
 describe("Webhook authorization", () => {
+  it("queues only authenticated, valid webhooks during a database move without sending", async () => {
+    const services = setup();
+    const enter = vi.fn().mockResolvedValue({ queued: true, release: async () => undefined });
+    const app = buildApp({ config, ...services, migrationGate: { enter } });
+    const url = "/webhooks/ghl/voice-ai-call-completed";
+    expect((await app.inject({ method: "POST", url, payload: webhook() })).statusCode).toBe(401);
+    expect(enter).not.toHaveBeenCalled();
+    expect((await app.inject({ method: "POST", url,
+      headers: { "x-wp-voice-ping-secret": config.ghlWebhookSecret }, payload: {} })).statusCode).toBe(422);
+    expect(enter).not.toHaveBeenCalled();
+    expect((await app.inject({ method: "POST", url,
+      headers: { "x-wp-voice-ping-secret": config.ghlWebhookSecret }, payload: webhook() })).statusCode).toBe(202);
+    expect(enter).toHaveBeenCalledWith("ghl", webhook());
+    expect(services.store.claimCount).toBe(0);
+    expect(services.telegram.sent).toHaveLength(0);
+    await app.close();
+  });
+
+  it("durably queues Telegram updates during a move and blocks admin mutations", async () => {
+    const services = setup();
+    const enter = vi.fn().mockResolvedValue({ queued: true, release: async () => undefined });
+    const app = buildApp({ config, ...services, migrationGate: { enter } });
+    const update = { update_id: 123, message: { message_id: 1, text: "/start",
+      chat: { id: 123, type: "private" }, from: { id: 123 } } };
+    const response = await app.inject({ method: "POST", url: "/telegram/webhook",
+      headers: { "x-telegram-bot-api-secret-token": config.telegramWebhookSecret }, payload: update });
+    expect(response.json()).toEqual({ ok: true, queued: true });
+    expect(enter).toHaveBeenCalledWith("telegram", update);
+    expect(services.telegram.sent).toHaveLength(0);
+    expect((await app.inject({ method: "POST", url: "/admin/test-message",
+      headers: { authorization: `Bearer ${config.adminApiToken}` }, payload: {} })).statusCode).toBe(503);
+    await app.close();
+  });
+
+  it("releases the migration lease when processing fails", async () => {
+    const services = setup();
+    vi.spyOn(services.processor, "process").mockRejectedValue(new Error("test failure"));
+    const release = vi.fn().mockResolvedValue(undefined);
+    const app = buildApp({ config, ...services,
+      migrationGate: { enter: async () => ({ queued: false, release }) } });
+    expect((await app.inject({ method: "POST", url: "/webhooks/ghl/voice-ai-call-completed",
+      headers: { "x-wp-voice-ping-secret": config.ghlWebhookSecret }, payload: webhook() })).statusCode).toBe(500);
+    expect(release).toHaveBeenCalledOnce();
+    await app.close();
+  });
+
   it("asks GHL to retry while another request is still processing the event", async () => {
     const { store, highLevel, telegram, processor } = setup();
     await store.claimCallEvent(webhook());

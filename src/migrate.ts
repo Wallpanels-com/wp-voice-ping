@@ -16,7 +16,10 @@ const migrationsDirectory = path.resolve(process.cwd(), "migrations");
 await client.connect();
 try {
   await client.query("SELECT pg_advisory_lock(hashtext('wp_voice_ping_migrations'))");
-  await client.query("CREATE SCHEMA IF NOT EXISTS wp_voice_ping");
+  // A scoped production role owns only this pre-provisioned schema. Even
+  // CREATE SCHEMA IF NOT EXISTS requires database-wide CREATE privileges.
+  const schema = await client.query("SELECT to_regnamespace('wp_voice_ping') AS name");
+  if (!schema.rows[0]?.name) await client.query("CREATE SCHEMA wp_voice_ping");
   await client.query(`
     CREATE TABLE IF NOT EXISTS wp_voice_ping.schema_migrations (
       filename text PRIMARY KEY,

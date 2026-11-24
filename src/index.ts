@@ -4,9 +4,11 @@ import { HighLevelHttpClient } from "./highlevel.js";
 import { CallProcessor } from "./processor.js";
 import { PgStore } from "./store.js";
 import { TelegramHttpClient } from "./telegram.js";
+import { PgMigrationGate } from "./migration-gate.js";
 
 const config = loadConfig();
-const store = new PgStore({ connectionString: config.databaseUrl });
+const store = new PgStore({ connectionString: config.databaseUrl, maxConnections: 5 });
+const migrationGate = new PgMigrationGate(config.databaseUrl);
 const telegram = new TelegramHttpClient({ token: config.telegramBotToken });
 const highLevel = new HighLevelHttpClient();
 const processorLogger = {
@@ -21,12 +23,13 @@ const processorLogger = {
   },
 };
 const processor = new CallProcessor(config, store, highLevel, telegram, processorLogger);
-const app = buildApp({ config, store, processor, telegram, highLevel });
+const app = buildApp({ config, store, processor, telegram, highLevel, migrationGate });
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, "Shutting down WP Voice Ping");
   await app.close();
   await store.close();
+  await migrationGate.close();
   process.exit(0);
 };
 

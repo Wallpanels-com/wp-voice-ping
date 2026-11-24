@@ -9,6 +9,7 @@ import type { CallProcessor } from "./processor.js";
 import { secureEquals } from "./security.js";
 import type { Store } from "./store.js";
 import type { TelegramClient } from "./telegram.js";
+import type { MigrationGate } from "./migration-gate.js";
 
 const telegramUpdateSchema = z.object({
   update_id: z.number(),
@@ -57,6 +58,7 @@ interface BuildAppOptions {
   processor: CallProcessor;
   telegram: TelegramClient;
   highLevel: HighLevelClient;
+  migrationGate?: MigrationGate;
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -112,7 +114,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return reply.code(422).send({ error: "invalid_location" });
     }
 
-    const outcome = await options.processor.process(parsed.data);
+    const lease = await options.migrationGate?.enter("ghl", parsed.data);
+    if (lease?.queued) return reply.code(202).send({ queued: true });
+    const outcome = await (async () => {
+      try { return await options.processor.process(parsed.data); }
+      finally { await lease?.release(); }
+    })();
     if (outcome.kind === "duplicate" && outcome.status === "processing") {
       // A concurrent request has not finished: do not acknowledge delivery yet.
       return reply.code(503).send(outcome);
@@ -137,7 +144,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     const parsed = telegramUpdateSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(422).send({ error: "invalid_update" });
-    await botCommands.handle(parsed.data as TelegramUpdate);
+    const lease = await options.migrationGate?.enter("telegram", parsed.data);
+    if (lease?.queued) return reply.code(200).send({ ok: true, queued: true });
+    try { await botCommands.handle(parsed.data as TelegramUpdate); }
+    finally { await lease?.release(); }
     return reply.code(200).send({ ok: true });
   });
 
@@ -148,6 +158,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       await reply.code(401).send({ error: "unauthorized" });
     }
   };
+
+  const adminLeases = new WeakMap<FastifyRequest, { release(): Promise<void> }>();
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "GET" || !request.url.startsWith("/admin/")) return;
+    await requireAdmin(request, reply);
+    if (reply.sent) return;
+    const lease = await options.migrationGate?.enter();
+    if (lease?.queued) { await reply.code(503).send({ error: "database_migration_in_progress" }); return; }
+    if (lease) adminLeases.set(request, lease);
+  });
+  app.addHook("onResponse", async (request) => { await adminLeases.get(request)?.release(); });
 
   app.get("/admin/sales", { preHandler: requireAdmin }, async () => {
     return { sales: await options.store.listSales() };

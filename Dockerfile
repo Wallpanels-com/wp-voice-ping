@@ -17,6 +17,7 @@ COPY --from=build --chown=app:app /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --from=build --chown=app:app /app/migrations ./migrations
+COPY --chown=app:app certs ./certs
 USER app
 EXPOSE 3000
 CMD ["npm", "run", "start:production"]
