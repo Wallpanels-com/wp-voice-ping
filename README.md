@@ -23,13 +23,13 @@ Voice AI call completed
   -> GoHighLevel Call Details workflow
   -> authenticated custom webhook
   -> Railway Fastify service
-  -> Neon Postgres mapping and idempotency
+  -> Supabase Postgres mapping and idempotency (private wp_voice_ping schema)
   -> Telegram private chat of the Assigned User and active all-call recipients
 ```
 
 ## Local setup
 
-Requirements: Node.js 22 or newer and a Neon PostgreSQL connection.
+Requirements: Node.js 22 or newer and a PostgreSQL connection.
 
 ```bash
 npm install
@@ -43,6 +43,15 @@ The supplied Word document and local `.env.local` are ignored by Git. Never copy
 ## Environment variables
 
 Required variables are listed in `.env.example`. Application traffic uses `DATABASE_URL`; migrations use `DATABASE_URL_UNPOOLED` when available. Each CRM location has its own read-only GHL token.
+
+Production uses the existing Supabase project `wpvh-sales-control` (`jqzhvnswwvbsqwwhcewn`),
+session pooler on port 5432, and the dedicated `wp_voice_ping_app` database role.
+Both database URL variables point to Supabase. TLS verifies the server certificate
+and hostname using `sslmode=verify-full&sslrootcert=/app/certs/supabase-ca.crt`.
+For local commands, use the absolute local path to `certs/supabase-ca.crt` instead.
+The bundled public CA is published by Supabase at
+https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt.
+Do not use transaction-pooler port 6543: startup migrations use a session advisory lock.
 
 The service resolves `conversationId` through HighLevel Conversations Search and uses the verified HighLevel UI route `/v2/location/{locationId}/conversations/conversations/{conversationId}`.
 
@@ -71,6 +80,26 @@ Telegram usernames are display metadata only and never grant access by themselve
 
 SQL migrations live in `migrations/`. The startup command applies unapplied migrations under an advisory lock before starting the server. The application uses the isolated `wp_voice_ping` schema.
 
+The bot role owns only this schema, has no access to sales-control's `public` tables,
+and has no database creation, role management, superuser, or RLS-bypass privileges.
+All bot tables have RLS enabled and no `anon`/`authenticated` grants. No Data API
+exposure or Supabase Auth integration is needed. The existing sales-control schema
+and credentials are unchanged.
+
+The database was moved from Neon on 2026-11-24, preserving every staff profile,
+binding, permission, event and delivery. Users do not need to reconnect. The old
+database is retained as a backup, with its migration barrier closed; it is not used
+by the running service. Do not roll back to an old Neon-configured deployment.
+
+`migration_state` normally stays open. Closing it waits for in-flight webhook
+handlers to finish, then authenticated valid webhooks are stored in
+`migration_inbox` before acknowledgment. Admin mutations return 503 while closed.
+Only events in that cutover inbox may be forwarded after a move; never replay the
+historical call table. `scripts/export-database.mjs` creates a private snapshot;
+`scripts/import-database.mjs` refuses to overwrite non-empty destination tables
+and verifies every copied table by checksum. These are manual operations tools,
+not background workers.
+
 Initial records include both locations and twelve known people. Dmitry is the only bot manager. Dmitry, Katherina, and Foxion CEO are all-call recipients; Katherina and Foxion cannot manage onboarding. Iryna Zienina and Tetiana Mushyn are mapped only to WallPanels, while Daria Inozemtseva, Shafag Ibragimova, and Jenny Cartner are mapped to both locations, matching the live GHL Users API. Numeric Telegram IDs are never inferred from usernames, names, or phone numbers.
 
 ## Verification
@@ -82,4 +111,6 @@ npm run check
 
 The automated suite verifies exact recipient routing, administrator broadcast and deduplication, two-location isolation, onboarding without codes, approval requests, duplicate suppression, required conversation links, webhook authorization, and transient GHL and Telegram failures.
 
-The live Voice AI call path cannot be declared complete until the GHL Workflow is created and one real call is tested. See `GHL_WORKFLOW_SETUP.md`.
+The database cutover was checked without sending test Telegram messages. A real
+post-cutover AI call is still needed to verify the full path on Supabase. See
+`GHL_WORKFLOW_SETUP.md` for the existing webhook contract.

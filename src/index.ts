@@ -39,7 +39,8 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 try {
   await app.listen({ host: "0.0.0.0", port: config.port });
   app.log.info(
-    { port: config.port, nodeEnv: config.nodeEnv, locations: [...config.locations.keys()] },
+    { port: config.port, nodeEnv: config.nodeEnv, locations: [...config.locations.keys()],
+      databaseHost: new URL(config.databaseUrl).hostname },
     "WP Voice Ping started",
   );
 } catch (error) {
